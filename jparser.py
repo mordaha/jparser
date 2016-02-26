@@ -14,15 +14,23 @@ import argparse
 import fileinput
 
 
-# list of filter functions field__functionName=value
+DEFAULT_FORMAT = '[{@timestamp}] {@fields[level]} {@message}'
+
+# list of test functions field__functionName=value
+# x is val from filter, y is value from json line
 FN_LIST = {
     'eq': lambda x, y: str(x) == str(y),
     'ne': lambda x, y: str(x) != str(y),
-    'like': lambda x, y: str(y) in str(x),
+    'in': lambda x, y: str(y) in str(x),
 }
 
 
 def parse_filter_string(s):
+    """
+    parses strink like "key1.key2.key3__fn=val"
+      and returns tuple:
+        ([list of keys], fn from FN_LIST or FN_LIST['eq'], val)
+    """
     left, val = s.strip().split('=')
     val = val.strip()
 
@@ -46,9 +54,13 @@ def parse_filter_string(s):
 
 
 def filter_line(keys, fn, val, **kwargs):
+    """
+    checks if kwargs contains key1.ke2.key3 (from keys) value
+    and returns result of fn(val, value) check, fn from FN_LIST
+    """
     search_value = kwargs
     for key in keys:
-        # здесь можно сделать .get() чтобы ингорировать несуществующие ключи
+        # may use .get() to avoid KeyError
         search_value = search_value[key]
     return fn(search_value, val)
 
@@ -61,13 +73,19 @@ def parse_json(json_line):
     return json.loads(json_line)
 
 
-def main(input_buff, *argv):
-    def hook_nobuf(filename, mode):
-        return open(filename, mode, 0)
-
+def main(input_buff, output_buff, argv):
+    """
+    reads format and filters from argv
+    reads lines from input_buff by .readline()
+    parses json
+    checks parsed_dict against filters
+    if passed writes formatted line to output_buff
+    """
     parser = argparse.ArgumentParser('It is all about parsing json...')
-    parser.add_argument('--format', default='[{@timestamp}] {@fields[level]} {@message}')
-    parser.add_argument('--filter', action='append')
+    parser.add_argument('--format',
+                        help='as for string.format() default is "{}"'.format(DEFAULT_FORMAT),
+                        default=DEFAULT_FORMAT)
+    parser.add_argument('--filter', action='append', help='e.g. key.key.key__fn=val')
     args = parser.parse_args(argv)
 
     filters = args.filter or []
@@ -75,25 +93,34 @@ def main(input_buff, *argv):
     filters_parsed = map(parse_filter_string, filters)
 
     while True:
-        line = input_buff.readline().strip()
+        line = input_buff.readline()
         if not line:
             break
 
-        parsed_dict = parse_json(line)
+        parsed_dict = parse_json(line.strip())
+        #
+        # this way Too complicated to read :)
+        #
+        # # if more than 1 filter given - tests parsed_dict against each with 'and' logic
+        # filter_pass = reduce(
+        #     lambda acc, x: acc and x,
+        #     map(
+        #         # x is (keys, fn, val) tuples as returned by parse_filter_string()
+        #         lambda x: filter_line(*x, **parsed_dict),
+        #         filters_parsed
+        #     ),
+        #     True)
 
-        # if more than 1 filter given - tests parsed_dict against each with 'and' logic
-        filter_pass = reduce(
-            lambda acc, x: acc and x,
-            map(
-                # x is (keys, fn, val) tuples as returned by parse_filter_string()
-                lambda x: filter_line(*x, **parsed_dict),
-                filters_parsed
-            ),
-            True)
+        filter_pass = True
+        for filter_tuple in filters_parsed:
+            filter_pass = filter_pass and filter_line(*filter_tuple, **parsed_dict)
+            if not filter_pass:
+                break
 
         if filter_pass:
-            print(format_line(format_string, **parsed_dict))
+            output_buff.write(format_line(format_string, **parsed_dict))
+            output_buff.write("\n")
 
 
 if __name__ == '__main__':
-    main(sys.stdin, *sys.argv[1:])
+    main(sys.stdin, sys.stdout, sys.argv[1:])

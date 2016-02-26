@@ -8,7 +8,12 @@ from __future__ import unicode_literals
 
 import unittest
 
-from jparser import parse_json, format_line, filter_line, parse_filter_string
+try:
+    from StringIO import StringIO
+except ImportError:
+    from io import StringIO
+
+from jparser import parse_json, format_line, filter_line, parse_filter_string, main as jparser_main
 
 
 class TestJParser(unittest.TestCase):
@@ -41,6 +46,27 @@ class TestJParser(unittest.TestCase):
         result = filter_line(keys, fn, val, **parsed_dict)
         self.assertEqual(result, False)
 
+    def test_main(self):
+        class STDIN(object):
+            end = False
+            def readline(self2):
+                if not self2.end:
+                    self2.end = True
+                    return self.json_line
+                else:
+                    return ''
+
+        output = StringIO()
+        jparser_main(STDIN(), output, ''.split())
+        self.assertIn('INFO', output.getvalue())
+
+        output = StringIO()
+        jparser_main(STDIN(), output, '--format "-{@source_host}-"'.split())
+        self.assertIn('-c57872949172-', output.getvalue())
+
+        output = StringIO()
+        jparser_main(STDIN(), output, '--filter @fields.level__ne=INFO'.split())
+        self.assertNotIn('INFO', output.getvalue())
 
 if __name__ == '__main__':
     unittest.main()
