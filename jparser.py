@@ -8,13 +8,17 @@ from __future__ import print_function
 from __future__ import unicode_literals
 
 import sys
+import os
 import json
+import argparse
+import fileinput
 
 
 # list of filter functions field__functionName=value
 FN_LIST = {
     'eq': lambda x, y: str(x) == str(y),
-    'ne': lambda x, y: str(x) == str(y),
+    'ne': lambda x, y: str(x) != str(y),
+    'like': lambda x, y: str(y) in str(x),
 }
 
 
@@ -57,9 +61,39 @@ def parse_json(json_line):
     return json.loads(json_line)
 
 
-def main():
-    print('main')
+def main(input_buff, *argv):
+    def hook_nobuf(filename, mode):
+        return open(filename, mode, 0)
+
+    parser = argparse.ArgumentParser('It is all about parsing json...')
+    parser.add_argument('--format', default='[{@timestamp}] {@fields[level]} {@message}')
+    parser.add_argument('--filter', action='append')
+    args = parser.parse_args(argv)
+
+    filters = args.filter or []
+    format_string = args.format
+    filters_parsed = map(parse_filter_string, filters)
+
+    while True:
+        line = input_buff.readline().strip()
+        if not line:
+            break
+
+        parsed_dict = parse_json(line)
+
+        # if more than 1 filter given - tests parsed_dict against each with 'and' logic
+        filter_pass = reduce(
+            lambda acc, x: acc and x,
+            map(
+                # x is (keys, fn, val) tuples as returned by parse_filter_string()
+                lambda x: filter_line(*x, **parsed_dict),
+                filters_parsed
+            ),
+            True)
+
+        if filter_pass:
+            print(format_line(format_string, **parsed_dict))
 
 
 if __name__ == '__main__':
-    main()
+    main(sys.stdin, *sys.argv[1:])
